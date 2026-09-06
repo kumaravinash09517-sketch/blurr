@@ -75,7 +75,6 @@ class MainActivity : BaseNavigationActivity() {
     private lateinit var tasksLeftText: TextView
     private lateinit var deltaSymbol: DeltaSymbolView
 
-
     private lateinit var root: View
     companion object {
         const val ACTION_WAKE_WORD_FAILED = "com.blurr.voice.WAKE_WORD_FAILED"
@@ -86,7 +85,6 @@ class MainActivity : BaseNavigationActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_WAKE_WORD_FAILED) {
                 Logger.d("MainActivity", "Received wake word failure broadcast.")
-                // The service stops itself, but we should refresh the UI state
                 updateUI()
                 showWakeWordFailureDialog()
             }
@@ -97,7 +95,6 @@ class MainActivity : BaseNavigationActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_PURCHASE_UPDATED) {
                 Logger.d("MainActivity", "Received purchase update broadcast.")
-                // Refresh billing status
                 showLoading(true)
                 performBillingCheck()
             }
@@ -113,25 +110,16 @@ class MainActivity : BaseNavigationActivity() {
             }
         }
 
-
-
-
     @RequiresApi(Build.VERSION_CODES.R)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         auth = Firebase.auth
-        val currentUser = auth.currentUser
-        val profileManager = UserProfileManager(this)
 
-        if (currentUser == null || !profileManager.isProfileComplete()) {
-            startActivity(Intent(this, LoginActivity::class.java))
-            finish()
-            return
-        }
+        // NOTE: Login Activity check completely bypassed here so login is not forced.
         onboardingManager = OnboardingManager(this)
         if (!onboardingManager.isOnboardingCompleted()) {
-            Logger.d("MainActivity", "User is logged in but onboarding not completed. Relaunching permissions stepper.")
+            Logger.d("MainActivity", "Onboarding not completed. Relaunching permissions stepper.")
             startActivity(Intent(this, OnboardingPermissionsActivity::class.java))
             finish()
             return
@@ -148,7 +136,6 @@ class MainActivity : BaseNavigationActivity() {
             showAssistantStatus(true)
         }
 
-
         setContentView(R.layout.activity_main_content)
         findViewById<TextView>(R.id.btn_set_default_assistant).setOnClickListener {
             startActivity(Intent(this, RoleRequestActivity::class.java))
@@ -156,11 +143,11 @@ class MainActivity : BaseNavigationActivity() {
         updateDefaultAssistantButtonVisibility()
 
         handleIntent(intent)
-        managePermissionsButton = findViewById(R.id.btn_manage_permissions) // ADDED
+        managePermissionsButton = findViewById(R.id.btn_manage_permissions)
 
         val userIdManager = UserIdManager(applicationContext)
         userId = userIdManager.getOrCreateUserId()
-        increaseLimitsLink = findViewById(R.id.increase_limits_link) // ADDED
+        increaseLimitsLink = findViewById(R.id.increase_limits_link)
 
         permissionManager = PermissionManager(this)
         permissionManager.initializePermissionLauncher()
@@ -191,7 +178,6 @@ class MainActivity : BaseNavigationActivity() {
             val videoUrl = "https://storage.googleapis.com/blurr-app-assets/wake_word_demo.mp4"
             VideoAssetManager.getVideoFile(this@MainActivity, videoUrl)
         }
-
     }
 
     private fun openAssistantPickerSettings() {
@@ -237,12 +223,7 @@ class MainActivity : BaseNavigationActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (auth.currentUser == null) {
-            startActivity(Intent(this, LoginActivity::class.java))
-            finish()
-            return
-        }
-        
+        // NOTE: Removed auth.currentUser login redirect check to prevent forced login screens.
         showLoading(true)
         performBillingCheck()
     }
@@ -293,9 +274,7 @@ class MainActivity : BaseNavigationActivity() {
             showExamplesDialog()
         }
         
-        // Add click listener to delta symbol
         deltaSymbol.setOnClickListener {
-            // Only start conversational agent if in ready/idle state
             if (pandaStateManager.getCurrentState() == PandaState.IDLE || pandaStateManager.getCurrentState() == PandaState.ERROR) {
                 startConversationalAgent()
             }
@@ -303,24 +282,19 @@ class MainActivity : BaseNavigationActivity() {
     }
 
     private fun requestLimitIncrease() {
-        val userEmail = auth.currentUser?.email
-        if (userEmail.isNullOrEmpty()) {
-            Toast.makeText(this, "Could not get your email. Please try again.", Toast.LENGTH_SHORT).show()
-            return
-        }
+        val userEmail = auth.currentUser?.email ?: "user@app.com"
 
         val recipient = "ayush0000ayush@gmail.com"
         val subject = "I am facing issue in"
         val body = "Hello,\n\nI am facing issue for my account: $userEmail\n <issue-content>.... \n\nThank you."
 
         val intent = Intent(Intent.ACTION_SENDTO).apply {
-            data = Uri.parse("mailto:") // Only email apps should handle this
+            data = Uri.parse("mailto:")
             putExtra(Intent.EXTRA_EMAIL, arrayOf(recipient))
             putExtra(Intent.EXTRA_SUBJECT, subject)
             putExtra(Intent.EXTRA_TEXT, body)
         }
 
-        // Verify that the intent will resolve to an activity
         if (intent.resolveActivity(packageManager) != null) {
             startActivity(intent)
         } else {
@@ -328,41 +302,33 @@ class MainActivity : BaseNavigationActivity() {
         }
     }
 
-
     private fun setupProBanner() {
         val proBanner = findViewById<View>(R.id.pro_upgrade_banner)
         val upgradeButton = findViewById<TextView>(R.id.upgrade_button)
         
         upgradeButton.setOnClickListener {
-            // Navigate to Pro purchase screen (Requirement 2.3)
             val intent = Intent(this, ProPurchaseActivity::class.java)
             startActivity(intent)
         }
         
-        // Initially hide the banner - it will be shown/hidden based on subscription status
         proBanner.visibility = View.GONE
     }
 
-    /**
-     * Initialize PandaStateManager and set up state change listeners
-     */
     private fun initializePandaStateManager() {
         pandaStateManager = PandaStateManager.getInstance(this)
         stateChangeListener = { newState ->
             updateStatusText(newState)
-
             updateDeltaVisuals(newState)
             Logger.d("MainActivity", "Panda state changed to: ${newState.name}")
         }
         pandaStateManager.addStateChangeListener(stateChangeListener)
     }
+
     private fun updateDeltaVisuals(state: PandaState) {
         runOnUiThread {
-            // Get the color for the current state
             val color = DeltaStateColorMapper.getColor(this, state)
             deltaSymbol.setColor(color)
 
-            // Start or stop the glow based on whether the state is "active"
             if (DeltaStateColorMapper.isActiveState(state)) {
                 deltaSymbol.startGlow()
             } else {
@@ -370,6 +336,7 @@ class MainActivity : BaseNavigationActivity() {
             }
         }
     }
+
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onResume() {
         super.onResume()
@@ -439,7 +406,6 @@ class MainActivity : BaseNavigationActivity() {
                 val selectedExample = examples[which]
                 if (selectedExample == "Surprise me"){
                     AgentService.start(this, "play never gonna give you up on youtube")
-
                 }
                 AgentService.start(this, selectedExample)
             }
@@ -452,7 +418,6 @@ class MainActivity : BaseNavigationActivity() {
             ContextCompat.getColor(this, R.color.black)
         )
     }
-
 
     private fun showWakeWordFailureDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_wake_word_failure, null)
@@ -488,6 +453,7 @@ class MainActivity : BaseNavigationActivity() {
             ContextCompat.getColor(this, R.color.white)
         )
     }
+
     private fun updateTaskCounter() {
         lifecycleScope.launch {
             val isUserSub = freemiumManager.isUserSubscribed()
@@ -543,11 +509,11 @@ class MainActivity : BaseNavigationActivity() {
             tvPermissionStatus.text = "All required permissions are granted."
             tvPermissionStatus.visibility = View.GONE
             managePermissionsButton.visibility = View.GONE
-            tvPermissionStatus.setTextColor(Color.parseColor("#4CAF50")) // Green
+            tvPermissionStatus.setTextColor(Color.parseColor("#4CAF50"))
             permissionsTag.visibility = View.VISIBLE
         } else {
             tvPermissionStatus.text = "Some permissions are missing. Tap below to manage."
-            tvPermissionStatus.setTextColor(Color.parseColor("#F44336")) // Red
+            tvPermissionStatus.setTextColor(Color.parseColor("#F44336"))
             permissionsTag.visibility = View.GONE
         }
     }
@@ -579,7 +545,6 @@ class MainActivity : BaseNavigationActivity() {
                 queryAndHandlePurchases()
                 updateTaskCounter()
                 updateBillingStatus()
-                
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error during billing check", e)
                 updateTaskCounter()
@@ -679,15 +644,8 @@ class MainActivity : BaseNavigationActivity() {
         }
     }
 
-
     private suspend fun updateUserToPro() {
-        val uid = Firebase.auth.currentUser?.uid
-        if (uid == null) {
-            Logger.e("MainActivity", "Cannot update user to pro: user is not authenticated.")
-            withContext(Dispatchers.Main) {
-            }
-            return
-        }
+        val uid = Firebase.auth.currentUser?.uid ?: return
 
         withContext(Dispatchers.IO) {
             val db = Firebase.firestore
@@ -695,106 +653,59 @@ class MainActivity : BaseNavigationActivity() {
                 val userDocRef = db.collection("users").document(uid)
                 userDocRef.update("plan", "pro").await()
                 Logger.d("MainActivity", "Successfully updated user $uid to 'pro' plan.")
-                withContext(Dispatchers.Main) {
-                }
-
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error updating user to pro", e)
-                withContext(Dispatchers.Main) {
-                }
             }
         }
     }
 
     private fun displayDeveloperMessage() {
-        //lifecycleScope.launch {
-            try {
-                // Check if message has been shown more than once
-                val sharedPrefs = getSharedPreferences("developer_message_prefs", Context.MODE_PRIVATE)
-                val displayCount = sharedPrefs.getInt("developer_message_count", 0)
-                
-                if (displayCount >= 1) {
-                    Logger.d("MainActivity", "Developer message already shown $displayCount times, skipping display")
-                    return
-                }
-
-                val remoteConfig = Firebase.remoteConfig
-
-                // Fetch and activate the latest Remote Config values
-                remoteConfig.fetchAndActivate()
-                    .addOnCompleteListener(this) { task ->
-                        if (task.isSuccessful) {
-                            val updated = task.result
-                            Log.d("MainActivity", "Remote Config params updated: $updated")
-
-                            // Get the message from the activated config
-                            val message = remoteConfig.getString("developerMessage")
-
-                            if (message.isNotEmpty()) {
-                                // Your existing dialog logic
-                                val dialog = AlertDialog.Builder(this@MainActivity)
-                                    .setTitle("Message from Developer")
-                                    .setMessage(message)
-                                    .setPositiveButton("OK") { dialogInterface, _ ->
-                                        dialogInterface.dismiss()
-                                        val editor = sharedPrefs.edit()
-                                        editor.putInt("developer_message_count", displayCount + 1)
-                                        editor.apply()
-                                    }
-                                    .show()
-                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
-                                    ContextCompat.getColor(this@MainActivity, R.color.black)
-                                )
-                                Log.d("MainActivity", "Developer message displayed from Remote Config.")
-                            } else {
-                                Log.d("MainActivity", "No developer message found in Remote Config.")
-                            }
-                        } else {
-                            Log.e("MainActivity", "Failed to fetch Remote Config.", task.exception)
-                        }
-                    }
-                
-//                val db = Firebase.firestore
-//                val docRef = db.collection("settings").document("freemium")
-//
-//                docRef.get().addOnSuccessListener { document ->
-//                    if (document != null && document.exists()) {
-//                        val message = document.getString("developerMessage")
-//                        if (!message.isNullOrEmpty()) {
-//                            val dialog = AlertDialog.Builder(this@MainActivity)
-//                                .setTitle("Message from Developer")
-//                                .setMessage(message)
-//                                .setPositiveButton("OK") { dialogInterface, _ ->
-//                                    dialogInterface.dismiss()
-//                                    // Increment the display count after user dismisses
-//                                    val editor = sharedPrefs.edit()
-//                                    editor.putInt("developer_message_count", displayCount + 1)
-//                                    editor.apply()
-//                                    Logger.d("MainActivity", "Developer message display count updated to ${displayCount + 1}")
-//                                }
-//                                .show()
-//                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
-//                                ContextCompat.getColor(this@MainActivity, R.color.black)
-//                            )
-//                            Logger.d("MainActivity", "Developer message displayed in dialog")
-//                        } else {
-//                            Logger.d("MainActivity", "Developer message is empty")
-//                        }
-//                    } else {
-//                        Logger.d("MainActivity", "Developer message document does not exist")
-//                    }
-//                }.addOnFailureListener { exception ->
-//                    Logger.e("MainActivity", "Error fetching developer message", exception)
-//                }
-            } catch (e: Exception) {
-                Logger.e("MainActivity", "Exception in displayDeveloperMessage", e)
+        try {
+            val sharedPrefs = getSharedPreferences("developer_message_prefs", Context.MODE_PRIVATE)
+            val displayCount = sharedPrefs.getInt("developer_message_count", 0)
+            
+            if (displayCount >= 1) {
+                Logger.d("MainActivity", "Developer message already shown $displayCount times, skipping display")
+                return
             }
-        //}
+
+            val remoteConfig = Firebase.remoteConfig
+
+            remoteConfig.fetchAndActivate()
+                .addOnCompleteListener(this) { task ->
+                    if (task.isSuccessful) {
+                        val updated = task.result
+                        Log.d("MainActivity", "Remote Config params updated: $updated")
+
+                        val message = remoteConfig.getString("developerMessage")
+
+                        if (message.isNotEmpty()) {
+                            val dialog = AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Message from Developer")
+                                .setMessage(message)
+                                .setPositiveButton("OK") { dialogInterface, _ ->
+                                    dialogInterface.dismiss()
+                                    val editor = sharedPrefs.edit()
+                                    editor.putInt("developer_message_count", displayCount + 1)
+                                    editor.apply()
+                                }
+                                .show()
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
+                                ContextCompat.getColor(this@MainActivity, R.color.black)
+                            )
+                            Log.d("MainActivity", "Developer message displayed from Remote Config.")
+                        } else {
+                            Log.d("MainActivity", "No developer message found in Remote Config.")
+                        }
+                    } else {
+                        Log.e("MainActivity", "Failed to fetch Remote Config.", task.exception)
+                    }
+                }
+        } catch (e: Exception) {
+            Logger.e("MainActivity", "Exception in displayDeveloperMessage", e)
+        }
     }
 
-    /**
-     * Update the status text based on the current PandaState
-     */
     fun updateStatusText(state: PandaState) {
         runOnUiThread {
             try {
@@ -803,14 +714,11 @@ class MainActivity : BaseNavigationActivity() {
                 Logger.d("MainActivity", "Status text updated to: $statusText for state: ${state.name}")
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error updating status text", e)
-                statusTextView.text = "Ready" // Fallback to default
+                statusTextView.text = "Ready"
             }
         }
     }
 
-    /**
-     * Update the status text with custom text (overrides state-based text)
-     */
     fun updateStatusText(customText: String) {
         runOnUiThread {
             try {
@@ -818,9 +726,8 @@ class MainActivity : BaseNavigationActivity() {
                 Logger.d("MainActivity", "Status text updated to custom text: $customText")
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error updating status text with custom text", e)
-                statusTextView.text = "Ready" // Fallback to default
+                statusTextView.text = "Ready"
             }
         }
     }
-
 }
