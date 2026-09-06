@@ -7,6 +7,7 @@ import com.blurr.voice.RawScreenData
 import com.blurr.voice.api.Eyes
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The Perception module is responsible for observing the device screen and
@@ -31,24 +32,30 @@ class Perception(
      * used to detect new UI elements.
      * @return A ScreenAnalysis object containing the complete state of the screen.
      */
-    suspend fun analyze(previousState: Set<String>? = null, all: Boolean? =  false): ScreenAnalysis {
+    suspend fun analyze(previousState: Set<String>? = null, all: Boolean? = false): ScreenAnalysis {
         return coroutineScope {
-        val rawDataDeferred = if (all == true) {
-            async { eyes.getAllRawScreenData() }
-        } else {
-            async { eyes.getRawScreenData() }
-        }
-        val keyboardStatusDeferred = async { eyes.getKeyBoardStatus() }
-        val currentActivity = async { eyes.getCurrentActivityName() }
-        val rawTree = rawDataDeferred.await() ?: RawScreenData(
-            null, 0, 0, 0,0
-        )
-        val isKeyboardOpen = keyboardStatusDeferred.await()
-        val activityName = currentActivity.await()
-        val rootNode = rawTree.rootNode
+            // Timeouts wrapped around async operations to prevent UI freezing
+            val rawDataDeferred = async {
+                withTimeoutOrNull(3000L) {
+                    if (all == true) eyes.getAllRawScreenData() else eyes.getRawScreenData()
+                }
+            }
+            val keyboardStatusDeferred = async {
+                withTimeoutOrNull(1500L) { eyes.getKeyBoardStatus() } ?: false
+            }
+            val currentActivityDeferred = async {
+                withTimeoutOrNull(1500L) { eyes.getCurrentActivityName() } ?: "Unknown"
+            }
 
-        // Parse the XML from the raw data
-            if(rootNode != null) {
+            val rawTree = rawDataDeferred.await() ?: RawScreenData(
+                null, 0, 0, 0, 0
+            )
+            val isKeyboardOpen = keyboardStatusDeferred.await()
+            val activityName = currentActivityDeferred.await()
+            val rootNode = rawTree.rootNode
+
+            // Parse the XML from the raw data
+            if (rootNode != null) {
                 var (uiRepresentation, elementMap) =
                     semanticParser.parseNodeTree(
                         rootNode,
@@ -83,9 +90,9 @@ class Perception(
                     scrollUp = rawTree.pixelsAbove, // Store the raw numbers
                     scrollDown = rawTree.pixelsBelow  // Store the raw numbers
                 )
-            } else{
+            } else {
                 ScreenAnalysis(
-                    uiRepresentation = "uiRepresentation", // The newly formatted string
+                    uiRepresentation = "The screen is empty or contains no interactive elements.", // The newly formatted string
                     isKeyboardOpen = isKeyboardOpen,
                     activityName = activityName,
                     elementMap = mutableMapOf(),
@@ -93,6 +100,6 @@ class Perception(
                     scrollDown = rawTree.pixelsBelow  // Store the raw numbers
                 )
             }
-    }
+        }
     }
 }
