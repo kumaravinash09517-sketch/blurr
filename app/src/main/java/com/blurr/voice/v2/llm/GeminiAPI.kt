@@ -48,6 +48,7 @@ class GeminiApi(
     companion object {
         private const val TAG = "GeminiV2Api"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val HARDCODED_API_KEY = "AQ.Ab8RN6KH9SqbzZOYpl1zDsNVng7501Ekaug9oqH640zgj4yfWw"
     }
 
     private val proxyUrl: String = BuildConfig.GCLOUD_PROXY_URL
@@ -64,15 +65,12 @@ class GeminiApi(
     // Cache for GenerativeModel instances to avoid repeated initializations.
     private val modelCache = ConcurrentHashMap<String, GenerativeModel>()
 
-
-
     private val jsonGenerationConfig = GenerationConfig.builder().apply {
         responseMimeType = "application/json"
 //        responseSchema = agentOutputSchema
     }.build()
 
     private val requestOptions = RequestOptions(timeout = 60.seconds)
-
 
     /**
      * Generates a structured response from the Gemini model and parses it into an [AgentOutput] object.
@@ -109,11 +107,16 @@ class GeminiApi(
      * the secure proxy or a direct API call.
      */
     private suspend fun performApiCall(messages: List<GeminiMessage>): String {
-        return if (!proxyUrl.isNullOrBlank() && !proxyKey.isNullOrBlank()) {
-            Log.i(TAG, "Proxy config found. Using secure Cloud Function.")
-            performProxyApiCall(messages)
-        } else {
-            Log.i(TAG, "Proxy config not found. Using direct Gemini SDK call (Fallback).")
+        return try {
+            if (!proxyUrl.isNullOrBlank() && !proxyKey.isNullOrBlank()) {
+                Log.i(TAG, "Proxy config found. Using secure Cloud Function.")
+                performProxyApiCall(messages)
+            } else {
+                Log.i(TAG, "Proxy config not found. Using direct Gemini SDK call (Fallback).")
+                performDirectApiCall(messages)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Proxy or standard call failed, attempting Direct API Call with static key: ${e.message}")
             performDirectApiCall(messages)
         }
     }
@@ -154,11 +157,17 @@ class GeminiApi(
      * DIRECT MODE: Performs the API call using the embedded Google AI SDK.
      */
     private suspend fun performDirectApiCall(messages: List<GeminiMessage>): String {
-        val apiKey = apiKeyManager.getNextKey()
+        val apiKey = try {
+            val key = apiKeyManager.getNextKey()
+            if (key.isBlank()) HARDCODED_API_KEY else key
+        } catch (e: Exception) {
+            HARDCODED_API_KEY
+        }
+
         val generativeModel = modelCache.getOrPut(apiKey) {
             Log.d(TAG, "Creating new GenerativeModel instance for key ending in ...${apiKey.takeLast(4)}")
             GenerativeModel(
-                modelName = modelName,
+                modelName = if (modelName.contains("gemini")) modelName else "gemini-1.5-flash",
                 apiKey = apiKey,
                 generationConfig = jsonGenerationConfig,
                 requestOptions = requestOptions
@@ -208,7 +217,12 @@ class GeminiApi(
      * @return The generated text content as a String, or null on failure.
      */
     suspend fun generateGroundedContent(prompt: String): String? {
-        val apiKey = apiKeyManager.getNextKey() // Reuse your existing key manager
+        val apiKey = try {
+            val key = apiKeyManager.getNextKey()
+            if (key.isBlank()) HARDCODED_API_KEY else key
+        } catch (e: Exception) {
+            HARDCODED_API_KEY
+        }
 
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
