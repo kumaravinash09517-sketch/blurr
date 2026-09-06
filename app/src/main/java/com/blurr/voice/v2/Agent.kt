@@ -49,12 +49,7 @@ class Agent(
 
             // 1. SENSE: Observe the current state of the screen.
             Log.d(TAG, "👀 Sensing screen state...")
-            val screenState: ScreenAnalysis = try {
-                perception.analyze()
-            } catch (e: Exception) {
-                Log.e(TAG, "Screen perception failed, using fallback", e)
-                ScreenAnalysis()
-            }
+            val screenState: ScreenAnalysis = perception.analyze()
 
             // 2. THINK (Prepare Prompt)
             Log.d(TAG, "🧠 Preparing prompt...")
