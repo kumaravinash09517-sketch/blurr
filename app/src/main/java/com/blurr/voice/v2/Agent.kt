@@ -10,6 +10,7 @@ import com.blurr.voice.v2.llm.GeminiApi
 import com.blurr.voice.v2.llm.GeminiMessage
 import com.blurr.voice.v2.message_manager.MemoryManager
 import com.blurr.voice.v2.perception.Perception
+import com.blurr.voice.v2.perception.ScreenAnalysis
 import com.blurr.voice.utilities.SpeechCoordinator
 import com.blurr.voice.overlay.OverlayDispatcher
 import com.blurr.voice.overlay.OverlayPriority
@@ -48,11 +49,11 @@ class Agent(
 
             // 1. SENSE: Observe the current state of the screen.
             Log.d(TAG, "👀 Sensing screen state...")
-            val screenState = try {
+            val screenState: ScreenAnalysis = try {
                 perception.analyze()
             } catch (e: Exception) {
-                Log.e(TAG, "Screen perception failed, continuing without screen state", e)
-                null
+                Log.e(TAG, "Screen perception failed, using fallback", e)
+                ScreenAnalysis()
             }
 
             // 2. THINK (Prepare Prompt)
