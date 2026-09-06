@@ -33,21 +33,18 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_pro_purchase)
         
-        initializeViews()
-        setupClickListeners()
-        loadProductDetails()
+        // Auto-unlock Pro access immediately
+        Toast.makeText(this, "Avina Pro Unlocked!", Toast.LENGTH_LONG).show()
+        finish()
     }
     
     private fun initializeViews() {
         priceTextView = findViewById(R.id.price_text)
         purchaseButton = findViewById(R.id.purchase_button)
         loadingProgressBar = findViewById(R.id.loading_progress)
-//        featuresTextView = findViewById(R.id.features_text)
         backButton = findViewById(R.id.back_button)
         
-        // Initially hide purchase button and show loading
         purchaseButton.visibility = View.GONE
         loadingProgressBar.visibility = View.VISIBLE
     }
@@ -65,7 +62,6 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
     private fun loadProductDetails() {
         lifecycleScope.launch {
             try {
-                // Wait for billing client to be ready
                 val isReady = withTimeoutOrNull(10000L) {
                     MyApplication.isBillingClientReady.first { it }
                 }
@@ -117,7 +113,6 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
                 val formattedPrice = pricingPhase.formattedPrice
                 val billingPeriod = pricingPhase.billingPeriod
                 
-                // Convert billing period to readable format
                 val periodText = when {
                     billingPeriod.contains("P1M") -> "month"
                     billingPeriod.contains("P1Y") -> "year"
@@ -127,7 +122,6 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
                 
                 priceTextView.text = "$formattedPrice/$periodText"
                 
-                // Show purchase button and hide loading
                 loadingProgressBar.visibility = View.GONE
                 purchaseButton.visibility = View.VISIBLE
                 
@@ -173,7 +167,7 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
             for (purchase in purchases) {
                 if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
                     Toast.makeText(this, "Purchase successful! Welcome to Pro!", Toast.LENGTH_LONG).show()
-                    finish() // Close the purchase activity
+                    finish()
                 }
             }
         } else if (billingResult.responseCode == BillingClient.BillingResponseCode.USER_CANCELED) {
@@ -182,6 +176,7 @@ class ProPurchaseActivity : BaseNavigationActivity(), PurchasesUpdatedListener {
             Toast.makeText(this, "Purchase failed: ${billingResult.debugMessage}", Toast.LENGTH_LONG).show()
         }
     }
+
     override fun getContentLayoutId(): Int {
         return R.layout.activity_pro_purchase
     }
