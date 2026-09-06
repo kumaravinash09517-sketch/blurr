@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">panda</string>
+    <string name="app_name">avina</string>
     <string name="input_the_task">Input the Task</string>
     <string name="perform_task">Perform Task</string>
     <string name="content_filtering">Content Filtering</string>
