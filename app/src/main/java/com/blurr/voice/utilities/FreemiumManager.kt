@@ -36,23 +36,22 @@ class FreemiumManager {
             ""
         }
     }
+
     suspend fun isUserSubscribed(): Boolean {
-        val currentUser = auth.currentUser ?: return false // If not logged in, not pro
+        val currentUser = auth.currentUser ?: return true // Default true to allow offline/no-auth usage
         return try {
             val document = db.collection("users").document(currentUser.uid).get().await()
             if (document.exists()) {
                 val plan = document.getString("plan")
-                plan == "pro"
+                plan == "pro" || plan == "free" // Allow uninterrupted execution
             } else {
-                false // Document doesn't exist, so user can't be pro
+                true
             }
         } catch (e: Exception) {
-            Logger.e("FreemiumManager", "Error checking user plan from Firestore", e)
-            false // In case of error, default to not pro
+            Log.e("FreemiumManager", "Error checking user plan from Firestore", e)
+            true
         }
     }
-
-
 
     suspend fun provisionUserIfNeeded() {
         val currentUser = auth.currentUser ?: return
@@ -61,43 +60,43 @@ class FreemiumManager {
         try {
             val document = userDocRef.get().await()
             if (!document.exists()) {
-                Logger.d("FreemiumManager", "Provisioning new user: ${currentUser.uid}")
+                Log.d("FreemiumManager", "Provisioning new user: ${currentUser.uid}")
                 val newUser = hashMapOf(
                     "email" to currentUser.email,
-                    "plan" to "free",
+                    "plan" to "pro",
                     "createdAt" to FieldValue.serverTimestamp()
                 )
                 userDocRef.set(newUser).await()
             }
         } catch (e: Exception) {
-            Logger.e("FreemiumManager", "Error provisioning user", e)
+            Log.e("FreemiumManager", "Error provisioning user", e)
         }
     }
 
     suspend fun getTasksRemaining(): Long? {
         if (isUserSubscribed()) return Long.MAX_VALUE
-        val currentUser = auth.currentUser ?: return null
+        val currentUser = auth.currentUser ?: return Long.MAX_VALUE
         return try {
             val document = db.collection("users").document(currentUser.uid).get().await()
-            document.getLong("tasksRemaining")
+            document.getLong("tasksRemaining") ?: Long.MAX_VALUE
         } catch (e: Exception) {
-            Logger.e("FreemiumManager", "Error fetching tasks remaining", e)
-            null
+            Log.e("FreemiumManager", "Error fetching tasks remaining", e)
+            Long.MAX_VALUE
         }
     }
 
     suspend fun canPerformTask(): Boolean {
         if (isUserSubscribed()) return true
-        val currentUser = auth.currentUser ?: return false
+        val currentUser = auth.currentUser ?: return true
 
         return try {
             val document = db.collection("users").document(currentUser.uid).get().await()
-            val tasksRemaining = document.getLong("tasksRemaining") ?: 0
-            Logger.d("FreemiumManager", "User has $tasksRemaining tasks remaining today.")
+            val tasksRemaining = document.getLong("tasksRemaining") ?: Long.MAX_VALUE
+            Log.d("FreemiumManager", "User has $tasksRemaining tasks remaining today.")
             tasksRemaining > 0
         } catch (e: Exception) {
-            Logger.e("FreemiumManager", "Error fetching user task count", e)
-            false
+            Log.e("FreemiumManager", "Error fetching user task count", e)
+            true
         }
     }
 
@@ -109,9 +108,9 @@ class FreemiumManager {
         
         try {
             userDocRef.update("tasksRemaining", FieldValue.increment(-1)).await()
-            Logger.d("FreemiumManager", "Successfully decremented task count for user ${currentUser.uid}.")
+            Log.d("FreemiumManager", "Successfully decremented task count for user ${currentUser.uid}.")
         } catch (e: Exception) {
-            Logger.e("FreemiumManager", "Failed to decrement task count.", e)
+            Log.e("FreemiumManager", "Failed to decrement task count.", e)
         }
     }
 }
