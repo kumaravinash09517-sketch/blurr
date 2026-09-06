@@ -112,6 +112,7 @@ class AgentService : Service() {
             context.startService(intent)
         }
     }
+
     @RequiresApi(Build.VERSION_CODES.R)
     override fun onCreate() {
         super.onCreate()
@@ -124,7 +125,7 @@ class AgentService : Service() {
         createNotificationChannel()
 
         settings = AgentSettings() // Use default settings for now
-        fileSystem = FileSystem(this,)
+        fileSystem = FileSystem(this)
         memoryManager = MemoryManager(this, "", fileSystem, settings)
         perception = Perception(Eyes(this), SemanticParser())
         llmApi = GeminiApi(
@@ -175,8 +176,6 @@ class AgentService : Service() {
             else Log.d(TAG, "Service started with no task, waiting for tasks.")
         }
 
-        // Use START_STICKY to ensure the service stays running in the background
-        // until we explicitly stop it. This is crucial for a queue-based system.
         return START_STICKY
     }
 
@@ -208,18 +207,17 @@ class AgentService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Task failed with an exception: $task", e)
                 trackTaskCompletion(task, false, e.message)
-                // Optionally update notification to show error state
             }
         }
 
-        Log.i(TAG, "Task queue is ActionExecutorempty. Stopping service.")
+        Log.i(TAG, "Task queue is empty. Stopping service.")
+        isRunning = false
         stopSelf() // Stop the service only when the queue is empty
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy: Service is being destroyed.")
-//        overlayManager.stopObserving()
         OverlayDispatcher.clearAll()
         overlayManager.stopObserving()
         isRunning = false
@@ -230,17 +228,10 @@ class AgentService : Service() {
         Log.i(TAG, "Service destroyed and all resources cleaned up.")
     }
 
-    /**
-     * This service does not provide binding, so we return null.
-     */
     override fun onBind(intent: Intent?): IBinder? {
         return null
     }
 
-    /**
-     * Creates the NotificationChannel for the foreground service.
-     * This is required for Android 8.0 (API level 26) and higher.
-     */
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
@@ -253,11 +244,7 @@ class AgentService : Service() {
         }
     }
 
-    /**
-     * Creates the persistent notification for the foreground service.
-     */
     private fun createNotification(contentText: String): Notification {
-
         val stopIntent = Intent(this, AgentService::class.java).apply {
             action = ACTION_STOP_SERVICE
         }
@@ -272,27 +259,18 @@ class AgentService : Service() {
             .setContentTitle("Panda Doing Task (Expand to stop Panda)")
             .setContentText(contentText)
             .addAction(
-                android.R.drawable.ic_media_pause, // Using built-in pause icon as stop button
+                android.R.drawable.ic_media_pause,
                 "Stop Panda",
                 stopPendingIntent
             )
-            .setOngoing(true) // Makes notification persistent and harder to dismiss
-             .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setOngoing(true)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .build()
     }
 
-    /**
-     * Tracks the task start in Firebase by appending it to the user's task history array.
-     * This method is inspired by FreemiumManager's Firebase operations.
-     */
     private suspend fun trackTaskInFirebase(task: String) {
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            Log.w(TAG, "Cannot track task, user is not logged in.")
-            return
-        }
-
         try {
+            val currentUser = auth.currentUser ?: return
             val taskEntry = hashMapOf(
                 "task" to task,
                 "status" to "started",
@@ -301,49 +279,29 @@ class AgentService : Service() {
                 "success" to null,
                 "errorMessage" to null
             )
-
-            // Append the task to the user's taskHistory array
             db.collection("users").document(currentUser.uid)
                 .update("taskHistory", FieldValue.arrayUnion(taskEntry))
                 .await()
-
-            Log.d(TAG, "Successfully tracked task start in Firebase for user ${currentUser.uid}: $task")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to track task in Firebase", e)
-            // Don't fail the task execution if Firebase tracking fails
+            Log.e(TAG, "Non-blocking Firebase track error: ${e.message}")
         }
     }
 
-    /**
-     * Updates the task completion status in Firebase.
-     * Since Firestore doesn't support updating array elements directly,
-     * we'll add a new completion entry to track the result.
-     */
     private suspend fun trackTaskCompletion(task: String, success: Boolean, errorMessage: String? = null) {
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            Log.w(TAG, "Cannot track task completion, user is not logged in.")
-            return
-        }
-
         try {
+            val currentUser = auth.currentUser ?: return
             val completionEntry = hashMapOf(
                 "task" to task,
                 "status" to if (success) "completed" else "failed",
-//                "startedAt" to null, // This is a completion entry, not a start entry
                 "completedAt" to Timestamp.now(),
                 "success" to success,
                 "errorMessage" to errorMessage
             )
-
-            // Append the completion status to the user's taskHistory array
             db.collection("users").document(currentUser.uid)
                 .update("taskHistory", FieldValue.arrayUnion(completionEntry))
                 .await()
-
-            Log.d(TAG, "Successfully tracked task completion in Firebase for user ${currentUser.uid}: $task (success: $success)")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to track task completion in Firebase", e)
+            Log.e(TAG, "Non-blocking Firebase track completion error: ${e.message}")
         }
     }
 }
