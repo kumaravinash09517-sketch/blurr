@@ -20,14 +20,6 @@ import kotlinx.coroutines.delay
 /**
  * The main conductor of the agent.
  * This class owns all the necessary components and runs the primary SENSE -> THINK -> ACT loop.
- *
- * @param settings The agent's configuration.
- * @param memoryManager The agent's short-term memory and prompt builder.
- * @param perception The agent's "eyes," responsible for analyzing the screen.
- * @param llmApi The client for communicating with the Gemini LLM.
- * @param actionExecutor The agent's "hands," responsible for executing actions on the device.
- * @param fileSystem The agent's long-term file storage.
- * @param context The Android application context.
  */
 @RequiresApi(Build.VERSION_CODES.R)
 class Agent(
@@ -39,38 +31,32 @@ class Agent(
     private val fileSystem: FileSystem,
     private val context: Context
 ) {
-    // The agent's internal state, which is updated at each step.
     val state: AgentState = AgentState()
     private val TAG = "AgentV2"
     
-    // Speech coordinator for voice notifications
     private val speechCoordinator = SpeechCoordinator.getInstance(context)
-
-    // A complete, long-term record of the entire session.
-    // We use <Unit> because we haven't defined a custom structured output for the 'done' action yet.
     val history: AgentHistoryList<Unit> = AgentHistoryList()
 
-    /**
-     * The main entry point to start the agent's execution loop.
-     *
-     * @param initialTask The high-level task requested by the user.
-     * @param maxSteps The maximum number of steps the agent can take before stopping.
-     */
     suspend fun run(initialTask: String, maxSteps: Int = 150) {
         memoryManager.addNewTask(initialTask)
         state.stopped = false
+        state.nSteps = 1
         Log.d(TAG, "--- Agent starting task: '$initialTask' ---")
 
         while (!state.stopped && state.nSteps <= maxSteps) {
-            Log.d(TAG,"\n--- Step ${state.nSteps}/$maxSteps ---")
+            Log.d(TAG, "\n--- Step ${state.nSteps}/$maxSteps ---")
 
             // 1. SENSE: Observe the current state of the screen.
-            Log.d(TAG,"👀 Sensing screen state...")
-            val screenState = perception.analyze()
+            Log.d(TAG, "👀 Sensing screen state...")
+            val screenState = try {
+                perception.analyze()
+            } catch (e: Exception) {
+                Log.e(TAG, "Screen perception failed, continuing without screen state", e)
+                null
+            }
 
-            // 2. THINK (Prepare Prompt): Update memory with the results of the LAST step
-            // and create the new prompt using the CURRENT screen state.
-            Log.d(TAG,"🧠 Preparing prompt...")
+            // 2. THINK (Prepare Prompt)
+            Log.d(TAG, "🧠 Preparing prompt...")
             memoryManager.createStateMessage(
                 modelOutput = state.lastModelOutput,
                 result = state.lastResult,
@@ -78,93 +64,101 @@ class Agent(
                 screenState = screenState
             )
 
-            // 3. THINK (Get Decision): Send the prepared messages to the LLM.
-            Log.d(TAG,"🤔 Asking LLM for next action...")
+            // 3. THINK (Get Decision)
+            Log.d(TAG, "🤔 Asking LLM for next action...")
             val messages = memoryManager.getMessages()
             val agentOutput = llmApi.generateAgentOutput(messages)
 
             // --- Handle LLM Failure ---
             if (agentOutput == null) {
-                Log.d(TAG,"❌ LLM failed to return a valid action. Retrying...")
+                Log.d(TAG, "❌ LLM failed to return a valid action. Retrying...")
                 state.consecutiveFailures++
-                // Add a corrective message for the next attempt.
                 memoryManager.addContextMessage(GeminiMessage(text = "System Note: Your previous output was not valid JSON. Please ensure your response is correctly formatted."))
                 if (state.consecutiveFailures >= settings.maxFailures) {
-                    Log.d(TAG,"❌ Agent failed too many times consecutively. Stopping.")
+                    Log.d(TAG, "❌ Agent failed too many times consecutively. Stopping.")
                     speechCoordinator.speakToUser("Agent failed after multiple attempts. Stopping execution.")
                     break
                 }
-                delay(1000) // Wait a moment before retrying
-                continue // Skip to the next loop iteration
+                delay(1000)
+                continue
             }
+
             state.consecutiveFailures = 0
             state.lastModelOutput = agentOutput
-            Log.d(TAG, agentOutput.toString())
-            Log.d(TAG, agentOutput.toString())
-            Log.d(TAG,"🤖 LLM decided: ${agentOutput.nextGoal}")
+            Log.d(TAG, "🤖 LLM decided: ${agentOutput.nextGoal}")
 
             // Show thoughts if enabled
             val sharedPrefs = context.getSharedPreferences("BlurrSettings", Context.MODE_PRIVATE)
             if (sharedPrefs.getBoolean(SettingsActivity.KEY_SHOW_THOUGHTS, false)) {
                 val thoughtText = buildString {
-                    agentOutput.thinking?.let { if (it.isNotEmpty()) append("Thinking: ${agentOutput.thinking}\n") }
-                    agentOutput.memory?.let { if (it.isNotEmpty()) append("Memory: ${agentOutput.memory}\n") }
-                    agentOutput.nextGoal?.let { if (it.isNotEmpty()) append("Next Goal: ${agentOutput.nextGoal}") }
+                    agentOutput.thinking?.let { if (it.isNotEmpty()) append("Thinking: $it\n") }
+                    agentOutput.memory?.let { if (it.isNotEmpty()) append("Memory: $it\n") }
+                    agentOutput.nextGoal?.let { if (it.isNotEmpty()) append("Next Goal: $it") }
                 }.trim()
 
                 if (thoughtText.isNotEmpty()) {
                     OverlayDispatcher.show(
                         text = thoughtText,
                         priority = OverlayPriority.TASKS,
-                        duration = 8000L, // Show for 8 seconds
+                        duration = 8000L,
                         position = OverlayPosition.TOP
                     )
                 }
             }
 
             // 4. ACT: Execute the LLM's planned actions.
-            Log.d(TAG,"💪 Executing actions...")
+            Log.d(TAG, "💪 Executing actions...")
             val actionResults = mutableListOf<ActionResult>()
-            for (action in agentOutput.action) {
-                val result = actionExecutor.execute(action, screenState, context, fileSystem)
-                actionResults.add(result)
-                Log.d(TAG,"  - Action '${action::class.simpleName}' executed. Result: ${result.longTermMemory ?: result.error ?: "OK"}")
+            
+            if (agentOutput.action.isEmpty()) {
+                // If no UI action returned, treat as direct text response and complete task
+                Log.d(TAG, "No UI actions, task completed with text response.")
+                state.stopped = true
+            } else {
+                for (action in agentOutput.action) {
+                    val result = actionExecutor.execute(action, screenState, context, fileSystem)
+                    actionResults.add(result)
+                    Log.d(TAG, "  - Action '${action::class.simpleName}' executed.")
 
-                // If an action fails, stop executing further actions in this step.
-                if (result.error != null) {
-                    Log.d(TAG,"  - 🛑 Action failed. Stopping current step's execution.")
-                    break
+                    if (result.isDone == true) {
+                        state.stopped = true
+                    }
+
+                    if (result.error != null) {
+                        Log.d(TAG, "  - 🛑 Action failed. Stopping current step's execution.")
+                        break
+                    }
                 }
             }
             state.lastResult = actionResults
 
-            // 5. RECORD: Save the complete step to the long-term history.
+            // 5. RECORD
             history.addItem(
                 AgentHistory(
                     modelOutput = agentOutput,
                     result = actionResults,
                     state = screenState,
-                    metadata = null // You can add timing/token metadata here later
+                    metadata = null
                 )
             )
 
             // --- Check for Task Completion ---
-            if (actionResults.any { it.isDone == true }) {
-                Log.d(TAG,"✅ Agent finished the task.")
-                speechCoordinator.speakToUser("Task completed successfully.")
+            if (state.stopped || actionResults.any { it.isDone == true }) {
+                Log.d(TAG, "✅ Agent finished the task.")
                 state.stopped = true
+                break
             }
 
             state.nSteps++
-            delay(1000) // A small, polite delay between steps.
+            delay(1000)
         }
 
         // --- Loop Finished ---
         if (state.nSteps > maxSteps) {
-            Log.d(TAG,"--- 🏁 Agent reached max steps. Stopping. ---")
+            Log.d(TAG, "--- 🏁 Agent reached max steps. Stopping. ---")
             speechCoordinator.speakToUser("Agent reached maximum steps limit. Stopping execution.")
         } else {
-            Log.d(TAG,"--- 🏁 Agent run finished. ---")
+            Log.d(TAG, "--- 🏁 Agent run finished successfully. ---")
         }
     }
 }
